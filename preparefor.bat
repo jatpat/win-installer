@@ -1,11 +1,12 @@
 @echo off
-setlocal
+SETLOCAL
+SETLOCAL ENABLEDELAYEDEXPANSION
 goto :PROLOGUE
 REM ==========================================================================
 REM preparefor.bat
 REM
 REM This batch file will prepare the NSIS build directory to build a specific
-REM version of the windows installer for popHealth and/or Cypress.
+REM version of the windows installer for Cypress.
 REM
 REM Some of the dependencies are available in both 32- and 64-bit
 REM variants.  Also, some of the dependencies are distributed as .zip files
@@ -32,8 +33,6 @@ REM
 REM TODO: 
 REM   - figure out a general way to calculate the space required by each
 REM     component and pass that into the nsis script for the AddSize command
-REM   - determine whether we want one installer that handles all of the
-REM     various products in our health care portfolio
 REM   - be careful about uninstalling software or data we didn't install
 REM
 REM ==========================================================================
@@ -43,19 +42,17 @@ echo.
 echo Usage: %0 ^<architecture^> ^<product^> ^<version^> [switches]
 echo.
 echo   %1 the target architecture: 32^|64
-echo   %2 the product:		  popHealth^|Cypress
-echo   %3 the version tag:	  version of the product (e.g. v1.1)
+echo   %2 the product:		  Cypress
+echo   %3 the version tag:	  version of the product (e.g. v1.1, develop, master)
 echo.
 echo Additionally you can pass the following switches on the command line
 echo   --help          to show usage information
 echo   --verbose       to turn echo on and see eberything that is happening
-echo   --fat-and-happy to generate a self-contained installer that packages all 
-echo                   requisite gems in the installer
-echo   --lean-and-mean to generate the bare minimum installer which relies on
-echo                   the client machine pulling gems at install time
+echo   --repo ^<repo^>   to specify an alternate git repository to pull from
+echo                     for example https://github.com/tlabczbrown
 echo.
 echo   --noclean       to not delete any lingering files from a previous installation
-echo   --nofetch       to not pull the tar files for measures and product
+echo   --nofetch       to not pull the tar files or source
 echo   --nobuild       to avoid unpacking and compiling requisite software
 echo   --nogenerate    to avoid generating the installer with NSIS
 echo.
@@ -67,22 +64,20 @@ REM mandatory params
 REM ====================
 set arch=%1
 set product=%2
-set installer_ver=%3
-
+set version=%3
 set installer_dir=%CD%
+set measures_ver=1.4.2
 
 REM ====================
 REM Tag or branch names of projects to bundle with the installer.  The machine
 REM building the installer will need git, but clients won't any more.
 REM
-REM There currently are dependencies on the measures and patient-importer projects, 
-REM redis, and mongodb, as well as a Java Runtime Environment
+REM There currently are dependencies on redis and mongodb
 REM
-REM When it comes time to build an installer for a new version of popHealth or
-REM Cypress, just update these if necessary and rebuild.
+REM When it comes time to build an installer for a new version of Cypress, just 
+REM update these if necessary and rebuild.
 REM ====================
-set measures_tag=v1.4.1
-set patient-importer_tag=v0.2
+set measures_tag=v1.4.2
 set redisdir=redis-2.4.0
 set mongodbdir=mongodb-2.0.1
 
@@ -101,28 +96,28 @@ set native_gem_list=bson_ext;json
 set gem_bson_ext_info=1.5.1;https://github.com/mongodb/mongo-ruby-driver.git
 set gem_json_info=v1.4.6;https://github.com/flori/json.git
 
+set cypress_git_url=https://github.com/projectcypress
+
 REM process all of the switches that were on the command line
-set self_contained=0
+set self_contained=1
 set showhelp=0
 set clean=1
 set fetch=1
 set build=1
 set generate=1
 set verbose=0
+
 if "%1"=="" (goto :USAGE)
 for %%A in (%*) do (
-  REM generate a "lean and mean" installer - one that has the bare 
-  REM minimum in the package and requires the client machine to pull the
-  REM rest from rubygems
-  if "%%A"=="--lean-and-mean"  (set self_contained=0)
 
-  REM generate a "fat and happy" installer - one that has all of the requisite
-  REM gems bundled within it (except the bundler gem itself)
-  if "%%A"=="--fat-and-happy"  (set self_contained=1)
-
-  if "%%A"=="--help"           (set showhelp=1)
-  if "%%A"=="--verbose"        (set verbose=1)
-  if "%%A"=="--db-name"        (set verbose=1)
+  if "%%A"=="--help"           ( set showhelp=1 )
+  if "%%A"=="--verbose"        ( set verbose=1 )
+  if "%%A"=="--repo"           ( set repo=1 )
+  set curarg=%%A
+  if "!curarg:~0,4!" == "http" ( 
+    for /l %%b in (1,1,31) do if "!curarg:~-1!"==" " set curarg=!curarg:~0,-1!
+    set cypress_git_url=!curarg!
+  )
 
   if "%%A"=="--noclean"        (set clean=0)
   if "%%A"=="--nofetch"        (set fetch=0)
@@ -140,19 +135,24 @@ if not "%arch%"=="32" (
   )
 )
 if not "%product%"=="Cypress" (
-  if not "%product%"=="popHealth" (
-    echo.
-    echo *** %product% is not a known product, please use Cypress or popHealth
-    echo.
-    goto :USAGE
-  )
+  echo.
+  echo *** %product% is not a known product, please use Cypress
+  echo.
+  goto :USAGE
 )
-set ver=%installer_ver:v=X%
-if "%installer_ver%"=="%version%" (
+set from_branch=0
+if "%version%" == "develop" (
+    set from_branch=1
+) else if "%version%" == "master" (
+    set from_branch=1
+) else (
+  set xversion=%version:v=X%
+  if "%xversion%"=="%version%" (
     echo.
     echo *** the version should begin with v, for example v1.2.1
     echo.
     goto :USAGE
+  )
 )
 if %verbose% == 1 (@echo on)
 if %showhelp%==1 (goto :USAGE)
@@ -164,6 +164,11 @@ echo Preparing to build a %arch%-bit %product% installer...
   ) else (
     echo *    - as a minimal-size package 
   )
+  echo *    - for version: %version%
+  echo *    - from       : %cypress_git_url%
+  echo.
+  echo *      params are clean=%clean%; fetch=%fetch%; build=%build%; generate=%generate%
+  echo.
 echo --------------------------------------------------------------------------------
 
 REM We need unzip, tar, curl, grep, bundle and makensis on the path.  Check for 'em
@@ -275,16 +280,18 @@ if %clean% == 1 (
 
   echo ...cleaning up from previous builds
   if exist binary_gems  (rd /s /q binary_gems)
-  if exist Cypress      (rd /s /q Cypress)
-  if exist popHealth    (rd /s /q popHealth)
-  if exist patient-importer     (rd /s /q patient-importer)
-  if exist measures     (rd /s /q measures)
+  if exist Cypress      (
+    attrib -s -h Cypress\*.* /S
+    REM for some strange reason, even though rd ought to be able to delete
+    REM all files in subdirectories, escpecially after removing system and 
+    REM hidden attributes, it takes 3 invocations to actually succeed
+    rd /s /q Cypress
+    rd /s /q Cypress
+    rd /s /q Cypress
+  )
   if exist %mongodbdir% (rd /s /q %mongodbdir%)
   if exist %redisdir%   (rd /s /q %redisdir%)
   if exist Cypress*.tgz (del Cypress*.tgz)
-  if exist popHealth*.tgz (del popHealth*.tgz)
-  if exist measures*.tgz (del measures*.tgz)
-  if exist patient-importer*.tgz (del patient-importer*.tgz)
 )
 
 REM ==========================================================================
@@ -292,32 +299,28 @@ REM FETCH
 REM ==========================================================================
 if %fetch% == 1 (
   echo ------
-  echo Step 2 Fetch tarballs of the various repos we need.
+  echo Step 2 Fetch tarballs/source of the various repos we need.
   echo ------
-  echo ...fetching tarball from github for %product%-%installer_ver% 
-  if "%product%"=="Cypress"   (
-    if not exist %product%-%installer_ver%.tgz (
-      "%curlcmd%" -s -k -L https://github.com/projectcypress/cypress/tarball/%installer_ver% > %product%-%installer_ver%.tgz
+  if %from_branch% == 1 (
+    echo ...fetching branch %version% from %cypress_git_url%
+    echo git.exe clone -b %version% %cypress_git_url%/cypress.git Cypress
+    git.exe clone -b %version% %cypress_git_url%/cypress.git Cypress
+  ) else (
+    echo ...fetching tarball from github for %product%-%version% 
+    if not exist %product%-%version%.tgz (
+      "%curlcmd%" -s -k -L %cypress_git_url%/tarball/%version% > %product%-%version%.tgz
+    )
+    REM Unpack the product and prepare it accordingly.
+    mkdir %product%
+    "%tarcmd%" --strip-components=1 -C %product% -xf .\%product%-%version%.tgz > nul 2> nul
+    if ERRORLEVEL 1 (
+      echo.
+      echo *** There is a problem with the tar file %product%-%version%.tgz
+      echo Please verify %version% is a valid tag for %product%
+      echo.
+      exit /b 1
     )
   )
-  if "%product%"=="popHealth" (
-    if not exist %product%-%installer_ver%.tgz (
-      "%curlcmd%" -s -k -L https://github.com/pophealth/popHealth/tarball/%installer_ver% > %product%-%installer_ver%.tgz
-    )
-  )
-
-  REM measures is used by both products
-  if not exist measures-%measures_tag%.tgz (
-    echo ...fetching tarball from github for measures-%measures_tag%
-    "%curlcmd%" -s -k -L https://github.com/pophealth/measures/tarball/%measures_tag% > measures-%measures_tag%.tgz
-  )
-
-  REM patient importer can be bundled in
-  if not exist patient-importer-%patient-importer_tag%.tgz (
-    echo ...fetching tarball from github for patient-importer-%patient-importer_tag%
-    "%curlcmd%" -s -k -L https://github.com/pophealth/patient-importer/tarball/%patient-importer_tag% > patient-importer-%patient-importer_tag%.tgz
-  )
-  echo.
 )
 
 REM ==========================================================================
@@ -328,75 +331,10 @@ if %build% == 1 (
   echo Step 3 Build native gems, package requisite software
   echo ------
 
-  REM Unpack the product and prepare it accordingly.
-  mkdir %product%
-  "%tarcmd%" --strip-components=1 -C %product% -xf .\%product%-%installer_ver%.tgz > nul 2> nul
-  if ERRORLEVEL 1 (
-    echo.
-    echo *** There is a problem with the tar file %product%-%installer_ver%.tgz
-    echo Please verify %installer_ver% is a valid tag for %product%
-    echo.
-    exit /b 1
-  )
-  if %self_contained% == 1 (
-    pushd %product%
-    echo ...packaging up all of the requisite gems into %product%/vendors/cache
-    if not exist Gemfile.lock ( call bundle.bat install --without="test build" )
-    call bundle.bat install --deployment
-    call bundle.bat package
-    popd
-  )
-
-  REM Unpack the measures project and prepare it accordingly.
-  mkdir measures
-  "%tarcmd%" --strip-components=1 -C measures -xf .\measures-%measures_tag%.tgz > nul 2> nul
-  if ERRORLEVEL 1 (
-    echo.
-    echo *** There is a problem with the tar file measures-%measures_tag%.tgz
-    echo Please verify %measures_tag% is a valid tag for measures
-    echo.
-    exit /b 1
-  )
-  if %self_contained% == 1 (
-    pushd measures
-    echo ...packaging up all of the requisite gems into measures/vendors/cache
-    if not exist Gemfile.lock ( call bundle.bat install --without="test build" )
-    call bundle.bat install --deployment
-    call bundle.bat package
-    popd
-  )
-
-  REM Unpack patient-importer and prepare it accordingly.
-  echo ...unpacking and preparing patient-importer
-  mkdir patient-importer
-  "%tarcmd%" --strip-components=1 -C patient-importer -xf .\patient-importer-%patient-importer_tag%.tgz > nul 2> nul
-  if ERRORLEVEL 1 (
-    echo.
-    echo *** There is a problem with the tar file patient-importer-%patient-importer_tag%.tgz
-    echo Please verify %patient-importer_tag% is a valid tag for the patient importer
-    echo.
-    exit /b 1
-  )
-
-  REM Don't want the JRE versions included in the patient-importer repo
-  pushd patient-importer
-  if exist jre32_6u24 ( rd /s /q jre32_6u24 )
-  if exist jre1.6.0_31 ( rd /s /q jre1.6.0_31 )
-  rm .gitignore
-  rm start_importer.sh
-  REM Move lib subdir up a level and delete rest of source
-  move source/lib .
-  rd /s /q source
-  REM Modify the startup batch file to reflect new lib location
-  sed -i -e 's/^jre32_6u24\\\\bin\\\\//' -e 's/source\\\\//g' start_importer.bat > nul 2> nul
-  popd
-
-  REM Build all the native gems we need to include.
-  if exist binary_gems ( 
-    echo ...removing existing binary_gems directory 
-    rd /s /q binary_gems
-  )
   echo ...building all the native gems required
+  REM TODO needed to add the following in my environment in order to fetch without ssl cert errors
+  REM git config --global http.sslVerify false
+
   mkdir binary_gems
   if not exist %gem_build_dir% (mkdir %gem_build_dir%)
   for %%g in (%native_gem_list%) do (
@@ -436,17 +374,32 @@ if %build% == 1 (
     )
   )
 
+  if %self_contained% == 1 (
+    pushd %product%
+    echo ...packaging up all of the requisite gems into %product%/vendor/cache
+    rm Gemfile.lock
+    call bundle.bat install
+    call bundle.bat install --deployment
+    call bundle.bat package
+    rm vendor\cache\bson_ext-1.5.1.gem
+    rm vendor\cache\json-1.4.6.gem
+    copy ..\binary_gems\bson_ext-1.5.1-x86-mingw32.gem vendor\cache\
+    copy ..\binary_gems\json-1.4.6-x86-mingw32.gem vendor\cache\
+    popd
+  )
+
   REM Unpack redis and prepare it accordingly.
-  echo ...unpacking and preparing redis...
+  echo ...unpacking and preparing redis into %redisdir%...
   if exist %redisdir% ( 
-    echo removing existing %resdir% directory 
+    echo ...removing existing %redisdir% directory 
     rd /s /q %redisdir%
   )
-  mkdir %redisdir%
+  rem mkdir %redisdir%
   "%unzipcmd%" .\redis-2.4.0-win32-win64.zip -d %redisdir% > nul
+  echo ...configuring newly exploded %redisdir%
   REM Copy our slightly modified redis.conf file into place
-  copy redis.conf %redisdir%\32bit > nul
-  copy redis.conf %redisdir%\64bit > nul
+  copy /Y redis.conf %redisdir%\32bit > nul
+  copy /Y redis.conf %redisdir%\64bit > nul
   REM Need to package an empty log file for redis
   echo Empty log for install > %redisdir%\redis_log.txt
   REM Create database directory
@@ -457,7 +410,7 @@ if %build% == 1 (
     rd /s /q %mongodbdir%
   )
   if "%arch%"=="32" (
-    echo ...doing 32bit specific stuff
+    echo ...setting up 32bit mongodb
   
     REM Delete the redis 64bit tree
     rd /s /q %redisdir%\64bit
@@ -466,13 +419,13 @@ if %build% == 1 (
     "%unzipcmd%" .\mongodb-win32-i386-2.0.1.zip > nul
     ren mongodb-win32-i386-2.0.1 %mongodbdir%
   ) else (
-    echo ...doing 64bit specific stuff
+    echo ...setting up 64bit mongodb
   
     REM Delete the redis 32bit tree
     rd /s /q %redisdir%\32bit
    
     REM Unzip 64bit mongodb
-    "%unzipcmd%" .\mongodb-win32-x86_64-2.0.1.zip
+    "%unzipcmd%" .\mongodb-win32-x86_64-2.0.1.zip > nul
     ren mongodb-win32-x86_64-2.0.1 %mongodbdir%
   )
 )
@@ -485,18 +438,20 @@ if %generate% == 1 (
   echo Step 4 Generate the windows installer using NSIS
   echo ------
 
-  echo ...determining how much space will be needed for %product% with measures and patient-importer
-  for /f "tokens=1,2 delims=	" %%a in ('du --summarize --total %%product%% measures patient-importer ^| findstr total') do if "%%b"=="total" set product_size=%%a
+  echo ...determining how much space will be needed for %product%
+  set product_size=0
+  for /f "tokens=1,2 delims=	" %%a in ('du --summarize Cypress ^| findstr Cypress') do if "%%b"=="Cypress" set product_size=%%a
+  echo !product_size! bytes are required for Cypress
  
   REM Run makensis to build product installer
   echo ...constructing the commandline to invoke NSIS
-  "%makensiscmd%" /DBUILDARCH=%arch% /DINSTALLER_VER=%installer_ver% /DPRODUCT_NAME=%product% /DPRODUCT_SIZE=%product_size%  main.nsi
+  "%makensiscmd%" /DBUILDARCH=%arch% /DVERSION=%version% /DPRODUCT_NAME=%product% /DPRODUCT_SIZE=!product_size! /DMEASURES_VERSION=%measures_ver% main.nsi
   echo.
   echo --------------------------------------------------------------------------------
   if %arch%==32 (
-    echo Installer is available for testing: %product%-%installer_ver%-i386.exe
+    echo Installer is available for testing: %product%-%version%-i386.exe
   ) else (
-    echo Installer is available for testing: %product%-%installer_ver%-x86_64.exe
+    echo Installer is available for testing: %product%-%version%-x86_64.exe
   )
   echo --------------------------------------------------------------------------------
   echo.

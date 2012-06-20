@@ -1,8 +1,7 @@
 ; main.nsi
 ;
-; This script will install the system passed in as PRODUCT_NAME (with all 
-; dependencies) and configure so that the application is available after
-; the next system boot.  It also sets up an uninstaller so that the user 
+; This script will install and configure Cypress.
+; It also sets up an uninstaller so that the user 
 ; can remove the application completely if desired.
 
 ;--------------------------------
@@ -24,30 +23,36 @@ SetCompressor /solid lzma
 
 ; Make sure the product name is defined
 !ifndef PRODUCT_NAME
-  !error "Must provide the name of the product. i.e. /DPRODUCT_NAME=[popHealth|Cypress]"
+  !error "Must provide the name of the product. i.e. /DPRODUCT_NAME=Cypress"
 !endif
 
-; Make sure the installer version number is defined
-!ifndef INSTALLER_VER
-  !error "Must provide installer version. i.e. /DINSTALLER_VER=<ver_num>"
+; Make sure the version number is defined
+!ifndef VERSION
+  !error "Must provide installer version. i.e. /DVERSION=<ver_num>"
 !endif
 
 ; Make sure the size required for the product is defined
 !ifndef PRODUCT_SIZE
-  !error "Must provide the size of product. i.e. /DPRODUCT_SIZE=<num_kb>"
+  !error "Must provide the size of product (in KB). i.e. /DPRODUCT_SIZE=105100"
 !endif
 
-; The file to write
-;OutFile "<PRODUCT_NAME>-i386.exe"
-!ifndef BUILDARCH
-  !define BUILDARCH 32
+; Make sure the version of the measures bundle is provided
+!ifndef MEASURES_VERSION
+  !error "Must provide version for the measures bundle. i.e. /DMEASURES_VERSION=1.4.2"
 !endif
-!if ${BUILDARCH} = 32
-OutFile "${PRODUCT_NAME}-${INSTALLER_VER}-i386.exe"
-!else
-OutFile "${PRODUCT_NAME}-${INSTALLER_VER}-x86_64.exe"
+
+; default to 64-bit architecture
+!ifndef BUILDARCH
+  !define BUILDARCH 64
 !endif
 !echo "BUILDARCH = ${BUILDARCH}"
+
+; The file to write
+!if ${BUILDARCH} = 32
+OutFile "${PRODUCT_NAME}-${VERSION}-i386.exe"
+!else
+OutFile "${PRODUCT_NAME}-${VERSION}-x86_64.exe"
+!endif
 
 ; Registry key to check for directory (so if you install again, it will
 ; overwrite the old one automatically)
@@ -201,8 +206,8 @@ SectionEnd
 ;-----------------------------------------------------------------------------
 ; Start Menu Shortcuts
 ;
-; Registers a Start Menu shortcut for the application uninstaller and another
-; to launch a web browser into the web application.
+; Registers a Start Menu shortcut for the application uninstaller and other
+; scrpits needed to launch a web browser into the web application.
 ;-----------------------------------------------------------------------------
 Section "Start Menu Shortcuts" sec_startmenu
 
@@ -216,6 +221,7 @@ Section "Start Menu Shortcuts" sec_startmenu
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
   CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.URL" "" "" ""
+  CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME} Web Server.lnk" "$INSTDIR\${PRODUCT_NAME}\script\webserver.bat"
   
 SectionEnd
 
@@ -271,6 +277,10 @@ Section "Install Bundler" sec_bundler
   ExecWait '"$rubydir\bin\gem.bat" install bundler'
   IfErrors 0 +2
     MessageBox MB_ICONEXCLAMATION|MB_OK "Failed to install the bundler gem."
+
+  ;some logging gems require version >1.8.0 of RubyGems to install properly
+  ExecWait '"$rubydir\bin\gem.bat" update --system'
+
 SectionEnd
 
 ;-----------------------------------------------------------------------------
@@ -297,58 +307,26 @@ Section "Install MongoDB" sec_mongodb
 
   ; Start the mongodb service
   ExecWait 'net.exe start "Mongo DB"'
+
 SectionEnd
 
 ;-----------------------------------------------------------------------------
 ; Redis
 ;
 ; Installs the redis server.  This program is distributed as a zip file, so
-; it is unpackage and included directly in the installer.  Once
-; installed, a scheduled task with a boot trigger is registered.  This will
-; result in the redis server being started every time the machine is rebooted.
+; it is unpackage and included directly in the installer.  
 ;-----------------------------------------------------------------------------
 Section "Install Redis" sec_redis
 
   SectionIn 1 3                  ; enabled in Full and Custom installs
 
   SetOutPath "$redisdir"
-
   File /r redis-2.4.0\*.*
 
-  ; Install a scheduled task to start redis on system boot
-  push "${PRODUCT_NAME} Redis Server"
-  push "Run the redis server at startup."
-  push "PT15S"
-  push "$redisdir\${BUILDARCH}bit\redis-server.exe"
-  push "redis.conf"
-  push "$redisdir\${BUILDARCH}bit"
-  push "Local Service"
-  Call CreateTask
-  pop $0
-  DetailPrint "Result of scheduling Redis Server task: $0"
-  SetRebootFlag true
 SectionEnd
 
 SectionGroupEnd
 ; end "Third party software"
-
-;-----------------------------------------------------------------------------
-; Quality Measures
-;
-; This section copies the Quality Measures onto the system
-;-----------------------------------------------------------------------------
-Section "Quality Measures" sec_qualitymeasures
-
-  SectionIn RO
-
-  ; Set output path to the installation directory.
-  SetOutPath $INSTDIR
-  File /r measures
-
-  ; Install required gems
-  SetOutPath $INSTDIR\measures
-  ExecWait 'bundle.bat install --without="test build"'
-SectionEnd
 
 ;-----------------------------------------------------------------------------
 ; Web Application
@@ -362,53 +340,81 @@ Section "${PRODUCT_NAME} Web Application" sec_webserver
   SectionIn RO
   AddSize ${PRODUCT_SIZE}        ; current size of cloned repo (in kB)
 
+  ; Define an environment variable for the database to use
+  ;  !insertmacro EnvVarEverywhere 'DB_NAME' 'cypress_production'
+
   ; Set output path to the installation directory.
   SetOutPath $INSTDIR
   File /r ${PRODUCT_NAME}
 
-  ; Install required native gems
-  SetOutPath $INSTDIR\depinstallers ; temporary directory
-  File /r binary_gems
-  ExecWait '"$rubydir\bin\gem.bat" install binary_gems\bson_ext-1.5.1-x86-mingw32.gem'
-  ExecWait '"$rubydir\bin\gem.bat" install binary_gems\json-1.4.6-x86-mingw32.gem'
-  RMDIR /r $INSTDIR\depinstallers\binary_gems
-
   SetOutPath "$INSTDIR\${PRODUCT_NAME}"
-  ExecWait 'bundle.bat install'
+  ExecWait 'bundle.bat install --local'
 
-  ; Install a scheduled task to start a web server on system boot
-  push "${PRODUCT_NAME} Web Server"
-  push "Run the web server that allows access to the ${PRODUCT_NAME} application."
-  push "PT1M30S"
-  push "$rubydir\bin\ruby.exe"
-  push "script/rails server -p 3000"
-  push "$INSTDIR\${PRODUCT_NAME}"
-  push "System"
-  Call CreateTask
-  pop $0
-  DetailPrint "Result of scheduling Web Server task: $0"
-  SetRebootFlag true
-SectionEnd
-
-;-----------------------------------------------------------------------------
-; Resque Workers
-;
-; This section installs a batch file that will start the resque workers and
-; schedules a task with a boot trigger so that the workers are always started
-; when the system boots up.
-;
-; It should appear after the main web application's Section so that the script
-; directory is available
-;-----------------------------------------------------------------------------
-Section "Install resque workers" sec_resque
-
-  SectionIn 1 3                  ; enabled in Full and Custom installs
-
-  ; Set output path to the product web app's script directory
-  SetOutPath $INSTDIR\${PRODUCT_NAME}\script
+  SetOutPath "$INSTDIR\${PRODUCT_NAME}\script"
 
   ; Install the batch file that starts the workers.
   File "run-resque.bat"
+
+  ; Create/Install a batch file that starts the web server with all prerequisites.
+  ClearErrors
+  FileOpen $0 "webserver.bat" w
+  IfErrors done
+  FileWrite $0 "@ECHO OFF$\r$\n"
+  ; generate the code that starts the redis-server
+  FileWrite $0 "echo Starting the redis-server to handle job queue management$\r$\n"
+  FileWrite $0 "cd $redisdir\${BUILDARCH}bit$\r$\n"
+  FileWrite $0 "start /b redis-server.exe redis.conf$\r$\n"
+
+  ; generate the code that starts the resque workers up
+  FileWrite $0 "SET QUEUE=*$\r$\n"
+  FileWrite $0 "SET RAILS_ENV=production$\r$\n"
+  FileWrite $0 "cd $INSTDIR\Cypress$\r$\n"
+  FileWrite $0 "echo.$\r$\n"
+  FileWrite $0 "echo Starting the resque workers to listen on the queue$\r$\n"
+  FileWrite $0 "start /b bundle.bat exec rake resque:work$\r$\n"
+  FileWrite $0 "echo.$\r$\n"
+
+  ; generate code that fires up the web server
+  FileWrite $0 "echo.$\r$\n"
+  FileWrite $0 "echo Starting up the Cypress web server which takes a few minutes...$\r$\n"
+  FileWrite $0 "echo Once you start seeing messages logged to this window, you can feel$\r$\n"
+  FileWrite $0 "echo free to use the Cypress shortcut to open a browser pointed to the application.$\r$\n"
+  FileWrite $0 "echo Alternatively, you can type the URL http://localhost:3000/ into an$\r$\n"
+  FileWrite $0 "echo existing browser.$\r$\n"
+  FileWrite $0 "echo.$\r$\n"
+  FileWrite $0 "echo          -- The Cypress Team$\r$\n"
+  FileWrite $0 "echo.$\r$\n"
+  FileWrite $0 "ruby.exe script\rails server -p 3000 -e production$\r$\n"
+
+  FileClose $0
+  done:
+
+SectionEnd
+
+;-----------------------------------------------------------------------------
+; Scheduled Tasks
+;
+; As an optional convenience, we can provide scheduled tasks to restart the 
+; key components upon rebooting the system.  These components are redis-server
+; (until we install 2.4.6 which can be run as a service), the resque workers
+; which are stared using script\run-resque.bat and the web server itself which 
+; is kicked off using script\webserver.bat
+;-----------------------------------------------------------------------------
+Section "${PRODUCT_NAME} Scheduled Tasks" sec_scheduledtasks
+
+  SectionIn 1 3
+
+  ; Install a scheduled task to start redis on system boot
+  push "${PRODUCT_NAME} Redis Server"
+  push "Run the redis server at startup."
+  push "PT15S"
+  push "$redisdir\${BUILDARCH}bit\redis-server.exe"
+  push "redis.conf"
+  push "$redisdir\${BUILDARCH}bit"
+  push "Local Service"
+  Call CreateTask
+  pop $0
+  DetailPrint "Result of scheduling Redis Server task: $0"
 
   ; Install the scheduled service to run the resque workers on startup.
   push "${PRODUCT_NAME} Resque Workers"
@@ -421,14 +427,51 @@ Section "Install resque workers" sec_resque
   Call CreateTask
   pop $0
   DetailPrint "Result of scheduling resque workers task: $0"
+
+  ; Install a scheduled task to start a web server on system boot
+  push "${PRODUCT_NAME} Web Server"
+  push "Run the web server that allows access to the ${PRODUCT_NAME} application."
+  push "PT1M30S"
+  push "$rubydir\bin\ruby.exe"
+  push "script/rails server -p 3000 -e production"
+  push "$INSTDIR\${PRODUCT_NAME}"
+  push "System"
+  Call CreateTask
+  pop $0
+  DetailPrint "Result of scheduling Web Server task: $0"
   SetRebootFlag true
 SectionEnd
 
+;-----------------------------------------------------------------------------
+; Post-install steps
+;
+; This section adds the Test Deck patient records to the mongo database so that
+; there is data to work with as soon as the installer finishes.
+; It also runs the quality measure engine on the test deck.
+;-----------------------------------------------------------------------------
+Section "Post-Install steps" sec_postinstall
 
-;-----------------------------------------------------------------------------
-; Include the product-specific Section definitions
-;-----------------------------------------------------------------------------
-!include ${PRODUCT_NAME}.nsh
+  SectionIn 1 3                  ; enabled in Full and Custom installs
+
+  SetOutPath "$redisdir\${BUILDARCH}bit"
+  ; start up the redis server for queue management
+  ExecShell "open" "redis-server.exe" "redis.conf" SW_HIDE
+
+  ; Set output path to the product web app's script directory
+  SetOutPath $INSTDIR\${PRODUCT_NAME}\script
+  ; start up the resque workers so that the initial evaluation of measures 
+  ; can be performed
+  ExecShell "open" "run-resque.bat" "" SW_HIDE
+
+  SetOutPath $INSTDIR\${PRODUCT_NAME}
+  ; seed with test deck (which also loads the measure definitions)
+  ExecWait 'bundle.bat exec rake mpl:initialize RAILS_ENV=production'
+
+  ; start up the web server
+  SetOutPath $INSTDIR\${PRODUCT_NAME}\script
+  ExecShell "open" "webserver.bat" "" SW_SHOWDEFAULT
+
+SectionEnd
 
 
 ;--------------------------------
@@ -441,8 +484,7 @@ SectionEnd
   LangString DESC_sec_bundler         ${LANG_ENGLISH} "Ruby Bundler gem"
   LangString DESC_sec_mongodb         ${Lang_ENGLISH} "MongoDB database server"
   LangString DESC_sec_redis           ${LANG_ENGLISH} "Redis server"
-  LangString DESC_sec_resque          ${LANG_ENGLISH} "${PRODUCT_NAME} resque workers"
-  LangString DESC_sec_qualitymeasures ${LANG_ENGLISH} "Quality measure definitions"
+  LangString DESC_sec_scheduledtasks  ${LANG_ENGLISH} "${PRODUCT_NAME} scheduled tasks"
   LangString DESC_sec_webserver       ${LANG_ENGLISH} "${PRODUCT_NAME} web application"
   LangString DESC_sec_postinstall     ${LANG_ENGLISH} "Initialize database with patient data and quality measures"
 
@@ -457,16 +499,10 @@ SectionEnd
     !insertmacro MUI_DESCRIPTION_TEXT ${sec_bundler}         $(DESC_sec_bundler)
     !insertmacro MUI_DESCRIPTION_TEXT ${sec_mongodb}         $(DESC_sec_mongodb)
     !insertmacro MUI_DESCRIPTION_TEXT ${sec_redis}           $(DESC_sec_redis)
-    !insertmacro MUI_DESCRIPTION_TEXT ${sec_resque}          $(DESC_sec_resque)
-    !insertmacro MUI_DESCRIPTION_TEXT ${sec_qualitymeasures} $(DESC_sec_qualitymeasures)
+    !insertmacro MUI_DESCRIPTION_TEXT ${sec_scheduledtasks}  $(DESC_sec_scheduledtasks)
     !insertmacro MUI_DESCRIPTION_TEXT ${sec_webserver}       $(DESC_sec_webserver)
-
-    ; each product defines its own section for the post-install steps
     !insertmacro MUI_DESCRIPTION_TEXT ${sec_postinstall}     $(DESC_sec_postinstall)
 
-    ; additional sections for patient importer
-    !insertmacro MUI_DESCRIPTION_TEXT ${sec_java}            $(DESC_sec_java)
-    !insertmacro MUI_DESCRIPTION_TEXT ${sec_patientimporter} $(DESC_sec_patientimporter)
   !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ;=============================================================================
@@ -490,7 +526,7 @@ Section "Uninstall"
   pop $0
   DetailPrint "Results of deleting Resque Workers task: $0"
 
-  ; Uninstall web application
+  ; Uninstall web application scheduled task
   ExecWait 'schtasks.exe /end /tn "${PRODUCT_NAME} Web Server"'
   push "${PRODUCT_NAME} Web Server"
   Call un.DeleteTask
@@ -498,11 +534,7 @@ Section "Uninstall"
   DetailPrint "Results of deleting Web Server task: $0"
   RMDIR /r $INSTDIR\${PRODUCT_NAME}
 
-  ; Uninstall quality measures
-  RMDIR /r $INSTDIR\measures
-
-  ; Uninstall redis
-  ; Stop task and remove scheduled task.
+  ; Uninstall redis and remove scheduled task.
   ExecWait 'schtasks.exe /end /tn "${PRODUCT_NAME} Redis Server"'
   push "${PRODUCT_NAME} Redis Server"
   Call un.DeleteTask
@@ -516,15 +548,6 @@ Section "Uninstall"
 
   ; Uninstall the Bundler gem
   ExecWait "gem.bat uninstall -x bundler"
-
-  ; Uninstall Java JRE
-  ; TODO: Did we really installer it?
-  MessageBox MB_ICONINFORMATION|MB_YESNO 'We installed Java.  Do you want us to uninstall it?' \
-      /SD IDYES IDNO skipjavauninst
-    ReadRegStr $0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{26A24AE4-039D-4CA4-87B4-2F83217003FF}" \
-      "UninstallString"
-    ExecWait '$0'
-  skipjavauninst:
 
   ; Uninstall ruby -- Should we do a silent uninstall
   ; TODO: Did we really install it?
@@ -545,7 +568,7 @@ Section "Uninstall"
   ; Remove directories used
   RMDir "$SMPROGRAMS\${PRODUCT_NAME}"
   RMDir "$INSTDIR\depinstallers"
-  RMDIR "$INSTDIR\${PRODUCT_NAME}"
+  RMDir "$INSTDIR\${PRODUCT_NAME}"
   RMDir "$INSTDIR"
 
 SectionEnd

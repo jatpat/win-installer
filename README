@@ -1,12 +1,12 @@
-                      popHealth/Cypress Windows Installer
+                      Cypress Windows Installer
 
 ===== WARNING === WARNING === WARNING === WARNING === WARNIN === WARNING =====
 
 This repository contains the files and scripts necessary to build a Windows
-installer of popHealth and/or Cypress.  This is not the place to go if you
-just want to install popHealth or Cypress on Windows.  However, is you are a
-developer, working to enhance or update the installer for the latest version
-of popHealth/Cypress, than you're in the right place.
+installer for Cypress.  This is not the place to go if you just want to install 
+Cypress on Windows.  However, is you are a developer, working to enhance or 
+update the installer for the latest version of Cypress, than you're in the 
+right place.
 
 ===== WARNING === WARNING === WARNING === WARNING === WARNIN === WARNING =====
 
@@ -56,15 +56,10 @@ of popHealth/Cypress, than you're in the right place.
 
   When testing installers, it is a good idea to have a reproducible environment
   to revert back to if/when things don't install or uninstall properly.  An
-  easy way to set this up is to have a VM (e.g. cypress-win7.mitre.org and
-  cypress-xp.mitre.org) on which you have the requisite privileges to create 
-  "snapshots".  Have one snapshot that is simply the original image that was 
-  cloned.  Then you can use the vSphere application 
-  (\\graw\ISO\VMWARE\VMware-viclient.exe) to go back to that snapshot whenever 
-  you need to.  Likewise, as you install products (like popHealth) 
-  successfully, you can take a snapshot of the machine's state.  If subsequent
-  product installs (like Cypress) fail for some reason, you can revert back to
-  the snapshot where popHealth is present.  
+  easy way to set this up is to have a VM on which you have the requisite 
+  privileges to create "snapshots".  Have one snapshot that is simply the 
+  original image that was cloned.  Then you can revert back to that snapshot 
+  whenever you need to.  
 
 =====================
 +  Building
@@ -73,7 +68,7 @@ of popHealth/Cypress, than you're in the right place.
 Building the installer is quite simple.  After installing NSIS, make sure the
 NSIS install tool directory (C:\Program Files\NSIS by default) and the Git bin
 directory are included in the PATH environment variable.  If there are different
-versions of mongodb, redis or our measurs project required, you'll need to change
+versions of mongodb or redis project required, you'll need to change
 the variables in the preparefor.bat file to reflect them. From the directory 
 where this file resides, simply execute the following command:
 
@@ -84,38 +79,30 @@ which will display the following:
 Usage: preparefor.bat <architecture> <product> <version> [switches]
 
    the target architecture: 32|64
-   the product:           popHealth|Cypress
-   the version tag:       version of the product (e.g. v1.1)
+   the product:           Cypress
+   the version tag:       version of the product (e.g. v1.1, develop, master)
 
 Additionally you can pass the following switches on the command line
-  --help               to show usage information
+  --help          to show usage information
   --verbose       to turn echo on and see eberything that is happening
-  --fat-and-happy to generate a self-contained installer that packages all
-                  requisite gems in the installer
-  --lean-and-mean to generate the bare minimum installer which relies on
-                  the client machine pulling gems at install time
+  --repo <repo>   to specify an alternate git repository to pull from
+                    for example https://github.com/tlabczbrown
 
   --noclean       to not delete any lingering files from a previous installation
-  --clean-only    to only run the "clean" step
   --nofetch       to not pull the tar files for measures and product
-  --fetch-only    to only run the "fetch" step
   --nobuild       to avoid unpacking and compiling requisite software
-  --build-only    to only run the "build" step
   --nogenerate    to avoid generating the installer with NSIS
-  --generate-only to only run the "generate" step
 
 A typical usage for each product would be:
-   preparefor 64 popHealth v1.4.1
-   preparefor 64 Cypress v1.1.1 --fat-and-happy
+   preparefor 64 Cypress v1.3.1
 
 The preparefor command is a batch file that prepares the directory for either a 32
-or a 64 bit build of the installer for popHealth or Cypress. The batch 
+or a 64 bit build of the installer for Cypress. The batch 
 file will also run the makensis command with the appropriate defines.  
 
 If all goes well, this will create an executable called either
-<product>-i386.exe (32 bit) or <product>-x86_64.exe (64 bit) which is the
-installer for the popHealth project for the respective architecture.  The same is
-true for Cypress installers.
+Cypress-<version>-i386.exe (32 bit) or Cypress-<version>--x86_64.exe (64 bit) 
+which is the installer for the respective architecture. 
 
 NB: the distinction between lean-and-mean and fat-and-happy is that the requisite
 gems are packaged up with the installer in placed in the vendor/cache directory
